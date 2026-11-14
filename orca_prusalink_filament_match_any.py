@@ -6,7 +6,7 @@
 # name = "PrusaLink Filament Match"
 # description = "Selects, for each filament slot, the installed filament preset that matches what a Prusa printer reports loaded in that tool."
 # author = "hyiger"
-# version = "0.1.0"
+# version = "0.2.0"
 # type = "script"
 # ///
 """PrusaLink Filament Match -- selects the filament presets that match what a Prusa printer holds.
@@ -16,8 +16,9 @@ PrusaLink, and selects, for that tool's filament slot, the installed filament pr
 any preset the slot's dropdown offers, from a vendor, a bundle or the user. Where several fit as well,
 the user picks among them in an HTML dialog.
 
-The printer reports these only with Buddy firmware that has Filament Slots, which serves them at
-GET /api/v1/tools.
+Buddy firmware with Filament Slots reports every tool at GET /api/v1/tools. Stock firmware reports only the
+material of the active tool, at GET /api/printer, so a project with one filament slot is matched by material
+alone.
 """
 import dataclasses
 import http.client
@@ -37,6 +38,9 @@ PERMISSION_TEXT = "OrcaSlicer needs your permission to reach this address. Allow
 
 # Buddy firmware with Filament Slots serves this; stock firmware answers 404.
 TOOLS_PATH = "/api/v1/tools"
+# Stock firmware reports here only the material of the active tool's filament, as "---" when none is loaded.
+PRINTER_PATH = "/api/printer"
+NO_FILAMENT = "---"
 PRINTER_TIMEOUT_SECONDS = 10
 # Below this CIE76 difference, two colors are one to the printer's color names, as white and off-white are.
 COLOR_TOLERANCE = 25
@@ -240,20 +244,33 @@ class Printer:
             self.headers["X-Api-Key"] = api_key
 
     def tools(self):
-        """Return {number: Tool} for the tools the printer reports, and the keys of those it could not read."""
-        request = urllib.request.Request(self.url + TOOLS_PATH, headers=self.headers)
+        """Return ({number: Tool}, the keys of the tools it could not read, whether it is stock firmware).
+
+        Stock firmware has no list of tools, and reports only the material of the active tool, which is taken
+        as tool 1.
+        """
+        body = self.get(TOOLS_PATH, missing_ok=True)
+        if body is not None:
+            return (*parse_tools(body), False)
+        return {1: stock_tool(self.get(PRINTER_PATH))}, [], True
+
+    def get(self, path, missing_ok=False):
+        """Return the decoded reply to GET *path*, or None for a 404 when *missing_ok* is set."""
+        request = urllib.request.Request(self.url + path, headers=self.headers)
         try:
             with urllib.request.build_opener(*self.handlers).open(request, timeout=PRINTER_TIMEOUT_SECONDS) as response:
-                return parse_tools(json.load(response))
+                return json.load(response)
         except PermissionError as error:
             raise MatchError(PERMISSION_TEXT) from error
         except urllib.error.HTTPError as error:
+            if error.code == 404 and missing_ok:
+                return None
             if error.code in (401, 403):
                 raise MatchError(f"The printer refused the API key or password. Check them in {self.settings}, "
                                  "and that login is enabled on the printer.") from error
             if error.code == 404:
-                raise MatchError(f"The printer at {self.url} does not report what its tools hold. "
-                                 "It needs Buddy firmware with Filament Slots.") from error
+                raise MatchError(f"The printer at {self.url} does not report what it holds. "
+                                 "Check that the address is a Prusa printer's PrusaLink.") from error
             raise MatchError(f"The printer at {self.url} returned an error: HTTP {error.code}.") from error
         except (urllib.error.URLError, TimeoutError) as error:
             raise MatchError(f"Could not reach the printer at {self.url}. Is it on?") from error
@@ -269,14 +286,15 @@ class Printer:
 
 @dataclasses.dataclass
 class Tool:
-    """What the printer reports about one tool. An empty tool has no material."""
+    """What the printer reports about one tool. An empty tool has no material, and *hardened* is None where the
+    printer does not say."""
     number: int
     material: str
     vendor: str
     color: str
     color_hex: tuple | None
     nozzle: float | None
-    hardened: bool
+    hardened: bool | None
 
     def describe(self):
         return " ".join(part for part in (self.vendor, self.material) if part)
@@ -316,6 +334,16 @@ def parse_tools(body):
     read = {key: read_tool(key, entry) for key, entry in tools.items()}
     return ({tool.number: tool for tool in read.values() if tool},
             sorted(key for key, tool in read.items() if not tool))
+
+
+def stock_tool(body):
+    """Read the reply to GET /api/printer from stock firmware, which names only the material of the active tool."""
+    telemetry = body.get("telemetry") if isinstance(body, dict) else None
+    material = telemetry.get("material") if isinstance(telemetry, dict) else None
+    if not isinstance(material, str):
+        raise MatchError("The printer's reply does not say what filament it holds.")
+    material = material.strip()
+    return Tool(1, "" if material == NO_FILAMENT else material, "", "", None, None, None)
 
 
 def lab(rgb):
@@ -440,7 +468,7 @@ def color_fit(tool, preset):
 
 def fit(tool, preset):
     """What tells presets apart for the printer, which knows a tool's vendor, material and color only."""
-    return preset.abrasive and not tool.hardened, color_fit(tool, preset)
+    return preset.abrasive and tool.hardened is False, color_fit(tool, preset)
 
 
 def preference(tool, preset):
@@ -577,12 +605,17 @@ def match(config):
     """Select, for each loaded tool of the printer, the installed preset that fits it best, or the one the user
     picks where several fit as well."""
     bundle = orca.host.preset_bundle()
-    tools, unreadable = Printer(bundle, config).tools()
+    tools, unreadable, stock = Printer(bundle, config).tools()
     if not tools and not unreadable:
         raise MatchError("The printer reports no tools, so none of its docks is calibrated yet.")
 
     presets = installed_presets(bundle.filaments)
     slot_names = list(bundle.current_filament_preset_names())
+    # Stock firmware names the material of the active tool or MMU slot, which may be any of several.
+    if stock and len(slot_names) > 1:
+        raise MatchError(f"The printer's firmware reports only the material in the active tool, so it cannot say what "
+                         f"each of this project's {len(slot_names)} filament slots holds. Match a project with one "
+                         "filament slot, or use Buddy firmware with Filament Slots.")
     # A slot may hold a preset the dropdown no longer offers, such as a hidden one, and it can keep it.
     current = [preset_candidate(preset) if (preset := bundle.filaments.find_preset(name)) is not None else None
                for name in slot_names]
@@ -601,6 +634,9 @@ def match(config):
         others.append(f"Not in this project, which has {slots}: {numbered('tool', beyond)}")
     if unreadable:
         others.append(f"Could not read what the printer sent for {numbered('tool', unreadable)}")
+    if stock:
+        others.append("The printer's firmware reports only the material, not the vendor or color, "
+                      "so slot 1 is matched by material alone")
 
     # Where several presets fit a tool as well, the user picks; that dialog also confirms the rest.
     asked = any(len(step.options) > 1 for step in steps)

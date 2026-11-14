@@ -14,7 +14,7 @@ The first run makes OrcaSlicer ask for permission to reach the printer: allow it
 
 ## What it needs
 
-- **A printer that reports its filaments:** a Prusa printer running [Buddy firmware with Filament Slots](https://github.com/hyiger/Prusa-Firmware-Buddy), `v6.9.2-hy.3` or later. You set each tool's vendor and color on the printer, under Filament > Filament slots. Stock Prusa firmware does not report them.
+- **A Prusa printer with PrusaLink.** With [Buddy firmware with Filament Slots](https://github.com/hyiger/Prusa-Firmware-Buddy), `v6.9.2-hy.3` or later, it reports each tool's vendor, material and color, which you set on the printer under Filament > Filament slots. Stock Prusa firmware reports less: see [Stock firmware](#stock-firmware).
 - **Presets for your filaments.** Any filament preset the slot's dropdown offers can be selected: a vendor's preset, one you saved, or one from a bundle such as [Filament DB Sync](https://github.com/hyiger/orcaslicer-filament-db-plugin)'s. Presets you hid, or that are not compatible with the printer, are left out.
 
 ## Settings
@@ -59,6 +59,14 @@ The list also notes:
 
 If the Filament tab has unsaved changes, OrcaSlicer asks about them before it switches presets, as when you pick one yourself. Cancel stops the command, and the slots changed before it stay changed.
 
+## Stock firmware
+
+Stock Prusa firmware reports over PrusaLink only the material of the filament in the active tool or MMU slot, such as `PLA`: no vendor, no color, and nothing about the other tools or whether the nozzle is hardened. So on a printer with stock firmware:
+
+- **Only a project with one filament slot can be matched.** The printer names the material in the tool or MMU slot in use, which may be any of several, so for a project with more filament slots, such as one for an XL, a Core One INDX or a printer with an MMU3, the command stops.
+- **Slot 1 is matched by material alone.** Every installed preset of that material fits as well, so the list offers them all, with a `Generic` preset first. The slot's own preset stays first when it is of that material.
+- **Abrasive filament is not put last,** as the printer does not say whether the nozzle is hardened.
+
 ## Development
 
 ```bash
@@ -67,7 +75,7 @@ python -m venv .venv
 .venv/bin/python -m pytest
 ```
 
-`pytest` fails below 100% line and branch coverage. Tests run against a stand-in for OrcaSlicer's `orca` module and a stand-in PrusaLink printer served over real HTTP, in `tests/conftest.py`. They hold the rules found by testing in OrcaSlicer: a slot's selector offers only presets that are shown and compatible, or the slot's own, and takes a preset by its internal name; `find_preset()` returns the edited copy of the selected preset. The printer takes an API key or the firmware's RFC 2069 Digest.
+`pytest` fails below 100% line and branch coverage. Tests run against a stand-in for OrcaSlicer's `orca` module and a stand-in PrusaLink printer served over real HTTP, with Filament Slots or as stock firmware, in `tests/conftest.py`. They hold the rules found by testing in OrcaSlicer: a slot's selector offers only presets that are shown and compatible, or the slot's own, and takes a preset by its internal name; `find_preset()` returns the edited copy of the selected preset. The printer takes an API key or the firmware's RFC 2069 Digest.
 
 To check the PrusaLink side against what the firmware sends byte for byte, run [prusalink-mock](https://github.com/hyiger/prusalink-mock) and point the printer's connection at `http://127.0.0.1:8088`, with API key `mockKeyTest2345`, or user `maker` and the same password.
 
@@ -81,4 +89,5 @@ The unit tests cannot reach the steps below, which need the running app.
 - [ ] With two presets of a tool's vendor and material named for its color, such as `Snow White` and `Translucent White` for White, match. A dialog lists both for that slot, with each other slot's preset beside it. Pick the second and press Select: the slot gets it. Match again: the list starts with it. Cancel and Escape change nothing. The dialog is readable in OrcaSlicer's dark mode.
 - [ ] Match again with the user and password instead. It reads the printer the same way.
 - [ ] Set the printer's connection to Prusa Connect, and put the printer's address and API key in `address` and `api_key`. Match reads the printer, and printing still goes through Prusa Connect.
+- [ ] Match a one-slot project on a printer with stock firmware and PLA loaded. The list offers the installed PLA presets for slot 1, `Generic PLA` first, and says the printer reports only the material.
 - [ ] Edit the filament in slot 1, then match a printer whose tool 1 holds another filament. OrcaSlicer asks about the edit, and Cancel leaves the slot and the edit as they were.

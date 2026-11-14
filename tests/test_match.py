@@ -116,10 +116,10 @@ class TestReadingThePrinter:
         self.red(app)
         assert app.match().status is PluginResult.Success
 
-    def test_stock_firmware_has_no_tools_to_report(self, app):
+    def test_an_address_that_is_not_prusalink_is_reported(self, app):
         app.printer.status = 404
-        assert app.match().message == (f"The printer at http://{app.printer.address} does not report what its "
-                                       "tools hold. It needs Buddy firmware with Filament Slots.")
+        assert app.match().message == (f"The printer at http://{app.printer.address} does not report what it "
+                                       "holds. Check that the address is a Prusa printer's PrusaLink.")
 
     def test_reports_another_error_by_its_status(self, app):
         app.printer.status = 503
@@ -165,6 +165,73 @@ class TestReadingThePrinter:
     def test_no_calibrated_dock_means_no_tools(self, app):
         load(app)
         assert app.match().message == "The printer reports no tools, so none of its docks is calibrated yet."
+
+
+class TestStockFirmware:
+    """Stock firmware reports only the material of the active tool, at /api/printer."""
+
+    @pytest.fixture(autouse=True)
+    def stock_firmware(self, app):
+        app.printer.stock = True
+
+    def test_matches_slot_1_by_material_alone(self, app):
+        stock(app, filament("Spike PETG Red", "Spike", "PETG", "#FF0000"),
+              filament("Generic PETG", "Generic", "PETG", None), filament("Spike PLA Red", "Spike", "PLA", "#FF0000"))
+        app.printer.material = "PETG"
+        app.match()
+        [window] = app.orca.host.ui.windows
+        [row] = window.data["rows"]
+        assert (row["tool"], row["color"]) == ("PETG", "")
+        assert labels(row) == ["Generic PETG", "Spike PETG Red"]
+        assert row["detail"] == f"Now {SYSTEM}; the printer names no vendor"
+        assert window.data["notes"] == ("The printer's firmware reports only the material, not the vendor or color, "
+                                        "so slot 1 is matched by material alone")
+        assert selected(app) == [(1, "Generic PETG")]
+        assert [path for path, _ in app.printer.requests] == ["/api/v1/tools", "/api/printer"]
+
+    def test_keeps_a_slots_preset_of_that_material(self, app):
+        stock(app, filament("Spike PLA Red", "Spike", "PLA", "#FF0000"))
+        slots(app, "Spike PLA Red")
+        assert app.match().message == ("Nothing to change.\n\nSlot 1: keeps Spike PLA Red\n"
+                                       "The printer's firmware reports only the material, not the vendor or color, "
+                                       "so slot 1 is matched by material alone")
+
+    def test_signs_in_with_digest_for_both_requests(self, app):
+        app.state.config.update(printhost_authorization_type="user", printhost_apikey="",
+                                printhost_user="maker", printhost_password=app.printer.password)
+        assert app.match().status is PluginResult.Success
+        assert ["Digest" in headers.get("Authorization", "") for path, headers in app.printer.requests
+                if path == "/api/printer"] == [False, True]
+
+    def test_no_filament_leaves_the_slot_alone(self, app):
+        app.printer.material = "---"
+        assert app.match().message == ("Nothing to change.\n\nEmpty on the printer, so left alone: tool 1\n"
+                                       "The printer's firmware reports only the material, not the vendor or color, "
+                                       "so slot 1 is matched by material alone")
+
+    def test_abrasive_filament_is_not_put_last(self, app):
+        """Stock firmware does not say whether the nozzle is hardened."""
+        stock(app, filament("Spike PA-CF", "Spike", "PA", None), filament("Spike PA", "Spike", "PA", None))
+        app.printer.material = "PA"
+        app.match()
+        assert labels(picker_rows(app)[0]) == ["Spike PA", "Spike PA-CF"]
+        assert "abrasive" not in picker_rows(app)[0]["detail"]
+
+    @pytest.mark.parametrize("nozzles", ["0.4", "0.4,0.4"])
+    def test_a_project_with_several_slots_is_refused(self, app, nozzles):
+        """An MMU3 printer has one nozzle and five slots, and the material is that of the MMU slot in use."""
+        app.state.nozzle = nozzles
+        slots(app, SYSTEM_NAME, SYSTEM_NAME)
+        assert app.match().message == ("The printer's firmware reports only the material in the active tool, so it "
+                                       "cannot say what each of this project's 2 filament slots holds. Match a project "
+                                       "with one filament slot, or use Buddy firmware with Filament Slots.")
+        assert not app.editor.selections
+
+    @pytest.mark.parametrize("body", [b"[]", b"{}", b'{"telemetry": []}', b'{"telemetry": {"material": 5}}'])
+    def test_a_reply_without_a_material_is_reported(self, app, body):
+        app.printer.body = body
+        app.printer.stock = True
+        assert app.match().message == "The printer's reply does not say what filament it holds."
 
 
 class TestReadingATool:

@@ -145,7 +145,10 @@ class FakeFilamentEditor:
 
 
 class FakePrinter:
-    """PrusaLink on Buddy firmware with Filament Slots, which takes an API key or RFC 2069 Digest."""
+    """PrusaLink on Buddy firmware with Filament Slots, which takes an API key or RFC 2069 Digest.
+
+    With `stock` set, it is stock firmware: no /api/v1/tools, and /api/printer names the active tool's material.
+    """
 
     REALM = "Printer API"
 
@@ -157,6 +160,8 @@ class FakePrinter:
         self.status = None
         self.body = None
         self.drop = False
+        self.stock = False
+        self.material = "PLA"
         self.requests = []
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), self.handler())
         threading.Thread(target=self.server.serve_forever, args=(0.01,), daemon=True).start()
@@ -196,7 +201,7 @@ class FakePrinter:
                 if not printer.authorized(self.headers):
                     challenge = f'Digest realm="{printer.REALM}", nonce="{secrets.token_hex(8)}", stale=FALSE'
                     self.reply(401, b"Unauthorized", [("WWW-Authenticate", challenge)])
-                elif self.path != "/api/v1/tools":
+                elif self.path not in ("/api/printer", "/api/v1/tools") or (printer.stock and "v1" in self.path):
                     self.reply(404, b"Not Found")
                 elif printer.drop:
                     return  # closes the connection without a reply
@@ -204,6 +209,9 @@ class FakePrinter:
                     self.reply(printer.status, b"Error")
                 elif printer.body is not None:
                     self.reply(200, printer.body)
+                elif self.path == "/api/printer":
+                    # Abridged: stock firmware also reports temperatures and state here.
+                    self.reply(200, json.dumps({"telemetry": {"temp-bed": 60.0, "material": printer.material}}).encode())
                 else:
                     self.reply(200, json.dumps({"tools": printer.tools}).encode())
 
