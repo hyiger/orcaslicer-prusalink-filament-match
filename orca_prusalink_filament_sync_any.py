@@ -66,6 +66,8 @@ ABRASIVE_WORDS = re.compile(r"""
                  | carbon (?: [\W_]?fib | (?![a-z]) (?![\W_]*(?:black|gr[ae]y)(?![a-z])) )
                  | glass [\W_]?fib )
 """, re.IGNORECASE | re.VERBOSE)
+# Vendors whose Carbon is carbon fiber whatever color follows it, as in Kimya PETG Carbon Black.
+CARBON_FIBER_VENDORS = frozenset({"kimya"})
 HEX_COLOR = re.compile(r"#?([0-9a-fA-F]{6})(?:[0-9a-fA-F]{2})?")
 NUMBER_LIST = re.compile(r"[+-]?\d*\.?\d+%?(,[+-]?\d*\.?\d+%?)*")
 # The printer a preset is for, as in "Prusament PLA @CORE One HF 0.4" and "Prusament PLA @MK4S - Copy". Its
@@ -367,9 +369,13 @@ def color_difference(first, second):
     return math.dist(lab(first), lab(second))
 
 
+def word_list(text):
+    """The words of *text* in order, folded for comparison, with grey spelled gray."""
+    return ["gray" if word == "grey" else word for word in re.findall(r"[0-9a-z]+", text.casefold())]
+
+
 def words(text):
-    """The words of *text*, folded for comparison, with grey spelled gray."""
-    return {"gray" if word == "grey" else word for word in re.findall(r"[0-9a-z]+", text.casefold())}
+    return set(word_list(text))
 
 
 def vendor_key(vendor):
@@ -406,6 +412,13 @@ class Candidate:
 IDENTITY_KEYS = ("default_filament_colour", "filament_type", "filament_vendor", "required_nozzle_HRC")
 
 
+def names_fiber(text, vendor):
+    """Whether *text* names carbon or glass fiber, as PA-CF, GF15, Carbon Fiber and ABS Carbon do. Carbon Black
+    is a color, except from a vendor whose Carbon line is carbon fiber filled, as Kimya's PETG Carbon Black is."""
+    return bool(ABRASIVE_WORDS.search(text)) or (
+        vendor_key(vendor) in CARBON_FIBER_VENDORS and "carbon" in word_list(text))
+
+
 def candidate(name, label, values, parent="", system=False):
     """Describe the preset *name* from *values*, which maps a setting to its list of values.
 
@@ -417,13 +430,17 @@ def candidate(name, label, values, parent="", system=False):
 
     material = first("filament_type")
     label_words, parent_words = (PRINTER_PART.sub(" ", text) for text in (label, parent))
-    named = frozenset(words(f"{label_words} {parent_words}"))
+    own, inherited = words(label_words), words(parent_words)
+    if own & PRINTER_COLORS:
+        # Spike PLA Blue, saved from Spike PLA Red, is blue.
+        inherited -= PRINTER_COLORS
+    named = frozenset(own | inherited)
     color = parse_color(first("default_filament_colour"))
     if color == BLANK_COLOR and "gray" not in named:
         color = None
     # The INDX profiles treat a filament that needs a hardened nozzle as abrasive.
     abrasive = first("required_nozzle_HRC") not in ("", "0") or any(
-        ABRASIVE_WORDS.search(text) for text in (label_words, parent_words, material))
+        names_fiber(text, first("filament_vendor")) for text in (label_words, parent_words, material))
     return Candidate(name, label, first("filament_vendor"), material, color, abrasive, named, system)
 
 
@@ -496,7 +513,10 @@ def options(tool, presets, current):
     fiber filament, nor Snow White from Translucent White: the user picks among presets that fit as well.
     The slot's own preset is the default when it fits as well, since the user chose it.
     """
-    ranked = sorted((preset for preset in presets if matches(tool, preset)), key=lambda preset: preference(tool, preset))
+    # The slot's preset is judged as edited, since the slot uses its edits, so the saved copy the dropdown lists
+    # is no option for it: a PLA preset edited to PETG is no PLA.
+    ranked = sorted((preset for preset in presets if matches(tool, preset)
+                     and (current is None or preset.name != current.name)), key=lambda preset: preference(tool, preset))
     kept = current is not None and matches(tool, current) and (not ranked or fit(tool, current) <= fit(tool, ranked[0]))
     if kept:
         ranked = [current, *(preset for preset in ranked if preset.name != current.name)]

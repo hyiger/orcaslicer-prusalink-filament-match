@@ -520,6 +520,24 @@ class TestAbrasive:
         app.sync()
         assert app.dialogs[-1].endswith(f"Slot 1: Spike PETG Black, in place of {SYSTEM}")
 
+    def test_kimyas_carbon_is_abrasive(self, app):
+        """Kimya's PETG Carbon Black is PETG with carbon fiber, whatever its preset says of the nozzle."""
+        stock(app, filament("Kimya PETG Carbon Black", "Kimya", "PETG", "#000000", hrc="0"),
+              filament("Kimya PETG Red", "Kimya", "PETG", "#FF0000"))
+        load(app, app.printer.tool("PETG", "Kimya", "Black", "#000000", hardened=False))
+        app.sync()
+        assert selected(app) == [(1, "Kimya PETG Red")]
+        assert app.dialogs[-1].endswith(
+            "(Kimya PETG Carbon Black is Black, but abrasive, and the nozzle is not hardened)")
+
+    @pytest.mark.parametrize("text, vendor, fiber", [
+        ("Kimya PETG Carbon Black", "Kimya", True),
+        ("Spike PLA Carbon Black", "Spike", False),
+        ("PETG Carbon", "", True),
+    ])
+    def test_carbon_black_is_a_color_except_from_kimya(self, plugin, text, vendor, fiber):
+        assert plugin.names_fiber(text, vendor) is fiber
+
     @pytest.mark.parametrize("text", ["PA-CF", "PETG-CF10", "GF30", "PA6 Glass Fibre", "PETG Carbon Fiber Black",
                                       "PLA CarbonFiber", "PETG Carbon", "Carbon PLA"])
     def test_names_of_fiber_filled_filament(self, plugin, text):
@@ -603,6 +621,27 @@ class TestKeeping:
         load(app, app.printer.tool("PLA", "Spike", "Galaxy Black", "#101010"))
         assert app.sync().message == "Nothing to change.\n\nSlot 1: keeps My Tuned PLA"
         assert labels(picker_rows(app)[0]) == ["My Tuned PLA", "Spike PLA Galaxy Black"]
+
+    def test_a_copy_named_for_a_color_is_not_its_parents(self, app):
+        """Spike PLA Blue, saved from Spike PLA Red, is no red preset."""
+        stock(app, filament("Spike PLA Blue", "Spike", "PLA", "#0000FF", parent="Spike PLA Red"))
+        load(app, app.printer.tool("PLA", "Spike", "Red", "#FF0000"))
+        app.sync()
+        assert selected(app) == [(1, "Spike PLA Blue")]
+        assert app.dialogs[-1].endswith("(no installed Spike PLA preset is Red)")
+
+    def test_judges_the_slots_preset_by_its_unsaved_edits(self, app):
+        """Spike PLA Red, edited to PETG and not saved, is no PLA, so its saved copy is no option either."""
+        stock(app, filament("Spike PLA Red", "Spike", "PLA", "#FF0000"),
+              filament("Spike PLA Scarlet Red", "Spike", "PLA", "#FF2400"))
+        slots(app, "Spike PLA Red")
+        app.filaments.select("Spike PLA Red")
+        app.filaments.edited = filament("Spike PLA Red", "Spike", "PETG", "#FF0000")
+        load(app, app.printer.tool("PLA", "Spike", "Red", "#FF0000"))
+        app.sync()
+        assert not app.orca.host.ui.windows
+        assert selected(app) == [(1, "Spike PLA Scarlet Red")]
+        assert app.dialogs[-1].endswith("Slot 1: Spike PLA Scarlet Red, in place of Spike PLA Red")
 
     def test_keeps_a_preset_the_dropdown_no_longer_offers(self, app):
         stock(app, filament("Overture PLA White", "Overture", "PLA", "#FFFFFF"),
