@@ -21,7 +21,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-MODULE = "orca_prusalink_filament_match_any"
+MODULE = "orca_prusalink_filament_sync_any"
 
 
 class PluginResult(enum.Enum):
@@ -317,10 +317,10 @@ def app(orca, plugin, printer):
     )
     orca.host.preset_bundle = lambda: bundle
     orca.host.preset.filament = FakeFilamentEditor(filaments, slots)
-    command = plugin.MatchPrinterFilaments()
+    command = plugin.SyncFromPrusaLink()
     command.config = {}
     return SimpleNamespace(
         filaments=filaments, state=state, plugin=plugin, orca=orca, printer=printer, slots=slots,
-        editor=orca.host.preset.filament, match=command.execute, config=command.config,
+        editor=orca.host.preset.filament, sync=command.execute, config=command.config,
         notifications=orca.host.ui.notifications, dialogs=orca.host.ui.dialogs,
     )

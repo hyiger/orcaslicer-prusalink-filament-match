@@ -1,4 +1,4 @@
-"""Match printer filaments: the printer's tools, read over PrusaLink, against the installed filament presets."""
+"""Sync filaments from PrusaLink: the printer's tools, read over PrusaLink, against the installed filament presets."""
 import urllib.request
 
 import pytest
@@ -49,7 +49,7 @@ class TestReadingThePrinter:
 
     def test_sends_the_api_key(self, app):
         self.red(app)
-        assert app.match().status is PluginResult.Success
+        assert app.sync().status is PluginResult.Success
         path, headers = app.printer.requests[-1]
         assert path == "/api/v1/tools"
         assert headers["X-Api-Key"] == app.printer.api_key
@@ -60,7 +60,7 @@ class TestReadingThePrinter:
         app.printer.password = 'pa"ss\\word'
         app.state.config.update(printhost_authorization_type="user", printhost_apikey="",
                                 printhost_user="maker", printhost_password='pa\\"ss\\\\word')
-        assert app.match().status is PluginResult.Success
+        assert app.sync().status is PluginResult.Success
         assert "Digest" in app.printer.requests[-1][1]["Authorization"]
         assert selected(app) == [(1, "Spike PLA Red")]
 
@@ -70,7 +70,7 @@ class TestReadingThePrinter:
     ])
     def test_a_refused_login_says_where_to_fix_it(self, app, change):
         app.state.config.update(change)
-        result = app.match()
+        result = app.sync()
         assert result.status is PluginResult.Skipped
         assert result.message == ("The printer refused the API key or password. Check them in its connection "
                                   "settings, and that login is enabled on the printer.")
@@ -79,8 +79,8 @@ class TestReadingThePrinter:
     @pytest.mark.parametrize("change", [{"host_type": "octoprint"}, {"print_host": " "}, {"host_type": None}])
     def test_needs_a_prusalink_connection(self, app, change):
         app.state.config.update(change)
-        assert app.match().message == (
-            "Set address, and api_key or user and password, in the Config tab of Match printer filaments. "
+        assert app.sync().message == (
+            "Set address, and api_key or user and password, in the Config tab of Sync filaments from PrusaLink. "
             "Or click Connection next to the printer, choose PrusaLink, and enter its address and API key or password.")
         assert not app.printer.requests
 
@@ -92,79 +92,79 @@ class TestReadingThePrinter:
 
     def test_reads_the_printer_from_its_own_settings(self, app):
         self.own_settings(app, api_key=app.printer.api_key)
-        assert app.match().status is PluginResult.Success
+        assert app.sync().status is PluginResult.Success
         assert app.printer.requests[-1][1]["X-Api-Key"] == app.printer.api_key
         assert selected(app) == [(1, "Spike PLA Red")]
 
     def test_its_own_settings_sign_in_with_digest(self, app):
         self.own_settings(app, user=" maker ", password=app.printer.password)
-        assert app.match().status is PluginResult.Success
+        assert app.sync().status is PluginResult.Success
         assert "Digest" in app.printer.requests[-1][1]["Authorization"]
 
     def test_its_own_settings_come_before_the_printers_connection(self, app):
         self.own_settings(app, api_key=app.printer.api_key)
         app.state.config.update(host_type="prusalink", print_host="127.0.0.1:9", printhost_apikey="wrong")
-        assert app.match().status is PluginResult.Success
+        assert app.sync().status is PluginResult.Success
 
     def test_a_refused_login_from_its_own_settings_says_where_to_fix_it(self, app):
         self.own_settings(app, api_key="wrong")
-        assert app.match().message == ("The printer refused the API key or password. Check them in the Config tab "
-                                       "of Match printer filaments, and that login is enabled on the printer.")
+        assert app.sync().message == ("The printer refused the API key or password. Check them in the Config tab "
+                                       "of Sync filaments from PrusaLink, and that login is enabled on the printer.")
 
     def test_takes_an_address_with_a_scheme_and_a_slash(self, app):
         app.state.config["print_host"] = f"http://{app.printer.address}/"
         self.red(app)
-        assert app.match().status is PluginResult.Success
+        assert app.sync().status is PluginResult.Success
 
     def test_an_address_that_is_not_prusalink_is_reported(self, app):
         app.printer.status = 404
-        assert app.match().message == (f"The printer at http://{app.printer.address} does not report what it "
+        assert app.sync().message == (f"The printer at http://{app.printer.address} does not report what it "
                                        "holds. Check that the address is a Prusa printer's PrusaLink.")
 
     def test_reports_another_error_by_its_status(self, app):
         app.printer.status = 503
-        assert app.match().message == f"The printer at http://{app.printer.address} returned an error: HTTP 503."
+        assert app.sync().message == f"The printer at http://{app.printer.address} returned an error: HTTP 503."
 
     def test_an_unreachable_printer_is_reported(self, app):
         app.printer.server.shutdown()
         app.printer.server.server_close()
-        assert app.match().message == f"Could not reach the printer at http://{app.printer.address}. Is it on?"
+        assert app.sync().message == f"Could not reach the printer at http://{app.printer.address}. Is it on?"
 
     def test_a_reply_that_is_not_json_is_reported(self, app):
         app.printer.body = b"<html>"
-        assert app.match().message == f"The printer at http://{app.printer.address} sent a reply that is not JSON."
+        assert app.sync().message == f"The printer at http://{app.printer.address} sent a reply that is not JSON."
 
     def test_a_dropped_connection_is_reported(self, app):
         """urllib wraps only errors in sending the request, not in reading the reply."""
         app.printer.drop = True
-        assert app.match().message == (f"The printer at http://{app.printer.address} closed the connection "
+        assert app.sync().message == (f"The printer at http://{app.printer.address} closed the connection "
                                        "before it answered. Run this again.")
 
     def test_a_reply_cut_short_is_reported(self, app, monkeypatch):
         def cut(*args, **kwargs):
             raise app.plugin.http.client.IncompleteRead(b"{")
         monkeypatch.setattr(urllib.request.OpenerDirector, "open", cut)
-        assert "closed the connection before it answered" in app.match().message
+        assert "closed the connection before it answered" in app.sync().message
 
     def test_an_address_with_a_bad_port_is_reported(self, app):
         app.config.update(address="127.0.0.1:abc", api_key=app.printer.api_key)
-        assert app.match().message == ("The printer address http://127.0.0.1:abc is not valid. "
-                                       "Check it in the Config tab of Match printer filaments.")
+        assert app.sync().message == ("The printer address http://127.0.0.1:abc is not valid. "
+                                       "Check it in the Config tab of Sync filaments from PrusaLink.")
 
     @pytest.mark.parametrize("body", [b"[]", b'{"tools": []}', b"{}"])
     def test_a_reply_without_tools_is_reported(self, app, body):
         app.printer.body = body
-        assert app.match().message == "The printer's reply does not list its tools."
+        assert app.sync().message == "The printer's reply does not list its tools."
 
     def test_asks_for_permission(self, app, monkeypatch):
         def denied(*args, **kwargs):
             raise PermissionError("blocked")
         monkeypatch.setattr(urllib.request.OpenerDirector, "open", denied)
-        assert app.match().message == app.plugin.PERMISSION_TEXT
+        assert app.sync().message == app.plugin.PERMISSION_TEXT
 
     def test_no_calibrated_dock_means_no_tools(self, app):
         load(app)
-        assert app.match().message == "The printer reports no tools, so none of its docks is calibrated yet."
+        assert app.sync().message == "The printer reports no tools, so none of its docks is calibrated yet."
 
 
 class TestStockFirmware:
@@ -178,7 +178,7 @@ class TestStockFirmware:
         stock(app, filament("Spike PETG Red", "Spike", "PETG", "#FF0000"),
               filament("Generic PETG", "Generic", "PETG", None), filament("Spike PLA Red", "Spike", "PLA", "#FF0000"))
         app.printer.material = "PETG"
-        app.match()
+        app.sync()
         [window] = app.orca.host.ui.windows
         [row] = window.data["rows"]
         assert (row["tool"], row["color"]) == ("PETG", "")
@@ -192,20 +192,20 @@ class TestStockFirmware:
     def test_keeps_a_slots_preset_of_that_material(self, app):
         stock(app, filament("Spike PLA Red", "Spike", "PLA", "#FF0000"))
         slots(app, "Spike PLA Red")
-        assert app.match().message == ("Nothing to change.\n\nSlot 1: keeps Spike PLA Red\n"
+        assert app.sync().message == ("Nothing to change.\n\nSlot 1: keeps Spike PLA Red\n"
                                        "The printer's firmware reports only the material, not the vendor or color, "
                                        "so slot 1 is matched by material alone")
 
     def test_signs_in_with_digest_for_both_requests(self, app):
         app.state.config.update(printhost_authorization_type="user", printhost_apikey="",
                                 printhost_user="maker", printhost_password=app.printer.password)
-        assert app.match().status is PluginResult.Success
+        assert app.sync().status is PluginResult.Success
         assert ["Digest" in headers.get("Authorization", "") for path, headers in app.printer.requests
                 if path == "/api/printer"] == [False, True]
 
     def test_no_filament_leaves_the_slot_alone(self, app):
         app.printer.material = "---"
-        assert app.match().message == ("Nothing to change.\n\nEmpty on the printer, so left alone: tool 1\n"
+        assert app.sync().message == ("Nothing to change.\n\nEmpty on the printer, so left alone: tool 1\n"
                                        "The printer's firmware reports only the material, not the vendor or color, "
                                        "so slot 1 is matched by material alone")
 
@@ -213,7 +213,7 @@ class TestStockFirmware:
         """Stock firmware does not say whether the nozzle is hardened."""
         stock(app, filament("Spike PA-CF", "Spike", "PA", None), filament("Spike PA", "Spike", "PA", None))
         app.printer.material = "PA"
-        app.match()
+        app.sync()
         assert labels(picker_rows(app)[0]) == ["Spike PA", "Spike PA-CF"]
         assert "abrasive" not in picker_rows(app)[0]["detail"]
 
@@ -222,7 +222,7 @@ class TestStockFirmware:
         """An MMU3 printer has one nozzle and five slots, and the material is that of the MMU slot in use."""
         app.state.nozzle = nozzles
         slots(app, SYSTEM_NAME, SYSTEM_NAME)
-        assert app.match().message == ("The printer's firmware reports only the material in the active tool, so it "
+        assert app.sync().message == ("The printer's firmware reports only the material in the active tool, so it "
                                        "cannot say what each of this project's 2 filament slots holds. Match a project "
                                        "with one filament slot, or use Buddy firmware with Filament Slots.")
         assert not app.editor.selections
@@ -231,7 +231,7 @@ class TestStockFirmware:
     def test_a_reply_without_a_material_is_reported(self, app, body):
         app.printer.body = body
         app.printer.stock = True
-        assert app.match().message == "The printer's reply does not say what filament it holds."
+        assert app.sync().message == "The printer's reply does not say what filament it holds."
 
 
 class TestReadingATool:
@@ -282,7 +282,7 @@ class TestInstalledPresets:
         stock(app, filament("Prusament PLA @CORE One", "Prusa Polymers", "PLA", "#FF8000", alias="Prusament PLA",
                             is_system=True))
         load(app, app.printer.tool("PLA", "Prusament", "Orange", "#FF8000"))
-        assert app.match().message == "Selected filament presets for slot 1."
+        assert app.sync().message == "Selected filament presets for slot 1."
         assert app.dialogs[-1].endswith(f"Slot 1: Prusament PLA, in place of {SYSTEM}")
         assert selected(app) == [(1, "Prusament PLA @CORE One")]
 
@@ -293,14 +293,14 @@ class TestInstalledPresets:
         app.filaments.presets["Default Filament"].values.update(filament_vendor="Spike", default_filament_colour="#FF0000")
         app.filaments.presets["Default Filament"].is_visible = True
         load(app, app.printer.tool("PLA", "Spike", "Red", "#FF0000"))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Spike PLA")]
 
     def test_the_users_own_preset_comes_before_a_vendors(self, app):
         stock(app, filament("Spike PLA Red @CORE One", "Spike", "PLA", "#FF0000", alias="Spike PLA Red", is_system=True),
               filament("Spike PLA Red Tuned", "Spike", "PLA", "#FF0000"))
         load(app, app.printer.tool("PLA", "Spike", "Red", "#FF0000"))
-        app.match()
+        app.sync()
         assert labels(picker_rows(app)[0]) == ["Spike PLA Red Tuned", "Spike PLA Red"]
         assert selected(app) == [(1, "Spike PLA Red Tuned")]
 
@@ -309,21 +309,21 @@ class TestInstalledPresets:
         stock(app, *(filament(f"Spike PLA Red @CORE One{nozzle}", "Spike", "PLA", "#FF0000", alias="Spike PLA Red",
                               is_system=True) for nozzle in ("", " HF 0.4")))
         load(app, app.printer.tool("PLA", "Spike", "Red", "#FF0000"))
-        app.match()
+        app.sync()
         assert labels(picker_rows(app)[0]) == ["Spike PLA Red @CORE One", "Spike PLA Red @CORE One HF 0.4"]
 
     def test_words_after_the_printer_still_count(self, app):
         stock(app, filament("Spike PLA @CORE One - Galaxy Black", "Spike", "PLA", "#000000"),
               filament("Spike PLA Jet", "Spike", "PLA", "#000000"))
         load(app, app.printer.tool("PLA", "Spike", "Galaxy Black", "#101010"))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Spike PLA @CORE One - Galaxy Black")]
         assert not app.orca.host.ui.windows
 
     def test_reads_a_vendor_value_with_spaces(self, app):
         stock(app, filament("3D Fuel Pro PCTG", "3D Fuel", "PCTG", "#FFFFFF"))
         load(app, app.printer.tool("PCTG", "3D-Fuel", "White", "#FFFFFF"))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "3D Fuel Pro PCTG")]
 
 
@@ -334,7 +334,7 @@ class TestChoosing:
               filament("Polymaker PLA Red", "Polymaker", "PLA", "#FF0000"),
               filament("Polymaker PETG Red", "Polymaker", "PETG", "#FF0000"))
         load(app, app.printer.tool("PLA", "Polymaker", "Red", "#FF0000"))
-        result = app.match()
+        result = app.sync()
         assert app.dialogs == ["Select these filament presets to match the printer?\n\n"
                                f"Slot 1: Polymaker PLA Red, in place of {SYSTEM}"]
         assert selected(app) == [(1, "Polymaker PLA Red")]
@@ -348,7 +348,7 @@ class TestChoosing:
     def test_vendors_match_without_case_or_punctuation(self, app, printer_vendor, preset_vendor):
         stock(app, filament(f"{preset_vendor} PLA", preset_vendor, "PLA", "#FF0000"))
         load(app, app.printer.tool("PLA", printer_vendor, "Red", "#FF0000"))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, f"{preset_vendor} PLA")]
 
     @pytest.mark.parametrize("printer_material, preset_material", [
@@ -357,14 +357,14 @@ class TestChoosing:
     def test_materials_match_as_the_printer_names_them(self, app, printer_material, preset_material):
         stock(app, filament("Spike Filament", "Spike", preset_material, "#FF0000"))
         load(app, app.printer.tool(printer_material, "Spike", "Red", "#FF0000"))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Spike Filament")]
 
     @pytest.mark.parametrize("printer_material, preset_material", [("PETG", "PET"), ("PET", "PETG"), ("PA", "PA11")])
     def test_other_materials_do_not_match(self, app, printer_material, preset_material):
         stock(app, filament("Spike Filament", "Spike", preset_material, "#FF0000"))
         load(app, app.printer.tool(printer_material, "Spike", "Red", "#FF0000"))
-        result = app.match()
+        result = app.sync()
         assert result.message == ("Nothing to change.\n\n"
                                   f"Slot 1: left alone, as no installed preset is Spike {printer_material}")
         assert not app.dialogs and not app.editor.selections
@@ -372,7 +372,7 @@ class TestChoosing:
     def test_another_vendor_is_never_selected(self, app):
         stock(app, filament("Polymaker PLA Red", "Polymaker", "PLA", "#FF0000"))
         load(app, app.printer.tool("PLA", "Siraya Tech", "Red", "#FF0000"))
-        assert app.match().message.endswith("no installed preset is Siraya Tech PLA")
+        assert app.sync().message.endswith("no installed preset is Siraya Tech PLA")
         assert not app.editor.selections
 
     def test_a_tool_without_a_vendor_prefers_generic(self, app):
@@ -381,7 +381,7 @@ class TestChoosing:
               filament("Generic PLA Blue", "Generic", "PLA", "#0000FF"))
         slots(app, "Generic PLA Blue")
         load(app, app.printer.tool("PLA", "", "Red", "#FF0000"))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Generic PLA Red")]
         [row] = picker_rows(app)
         assert labels(row) == ["Generic PLA Red", "Overture PLA Red"]
@@ -391,7 +391,7 @@ class TestChoosing:
         stock(app, filament("Overture PLA Red", "Overture", "PLA", "#FF0000"),
               filament("Generic PLA Blue", "Generic", "PLA", "#0000FF"))
         load(app, app.printer.tool("PLA", "", "Red", "#FF0000"))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Overture PLA Red")]
 
 
@@ -400,7 +400,7 @@ class TestColors:
         stock(app, filament("Prusament PLA Galaxy Black", "Prusament", "PLA", "#3D3E3D"),
               filament("Prusament PLA Jet", "Prusament", "PLA", "#000000"))
         load(app, app.printer.tool("PLA", "Prusament", "Galaxy Black", "#101010"))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Prusament PLA Galaxy Black")]
         assert not app.orca.host.ui.windows
 
@@ -408,7 +408,7 @@ class TestColors:
         stock(app, filament("Spike PLA Space Grey", "Spike", "PLA", "#202020"),
               filament("Spike PLA Teal", "Spike", "PLA", "#008080"))
         load(app, app.printer.tool("PLA", "Spike", "Gray", "#808080"))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Spike PLA Space Grey")]
 
     def test_a_name_with_another_printer_color_is_another_color(self, app):
@@ -416,7 +416,7 @@ class TestColors:
         stock(app, filament("Spike PLA Silver", "Spike", "PLA", "#F0F0F0"),
               filament("Spike PLA Arctic", "Spike", "PLA", "#E0E8F0"))
         load(app, app.printer.tool("PLA", "Spike", "White", "#FFFFFF"))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Spike PLA Arctic")]
 
     def test_a_color_named_otherwise_goes_by_its_value(self, app):
@@ -425,14 +425,14 @@ class TestColors:
               filament("Spike PLA", "Spike", "PLA", None),
               filament("Spike PLA Red", "Spike", "PLA", "#FF0000"))
         load(app, app.printer.tool("PLA", "Spike", "Navy", "#000080"))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Spike PLA Dark Blue")]
         assert app.dialogs[-1].endswith(f"Slot 1: Spike PLA Dark Blue, in place of {SYSTEM}")
 
     def test_a_color_named_otherwise_and_far_off_is_another_color(self, app):
         stock(app, filament("Spike PLA", "Spike", "PLA", None), filament("Spike PLA Red", "Spike", "PLA", "#FF0000"))
         load(app, app.printer.tool("PLA", "Spike", "Navy", "#000080"))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Spike PLA")]
         assert app.dialogs[-1].endswith("(no installed Spike PLA preset is Navy)")
 
@@ -441,7 +441,7 @@ class TestColors:
         stock(app, filament("Spike PLA Silk Ivory", "Spike", "PLA", "#FFFFFF"),
               filament("Spike PLA Ivory", "Spike", "PLA", "#F5F5DC"))
         load(app, app.printer.tool("PLA", "Spike", "", "#FFFFFF"))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Spike PLA Ivory")]
         assert labels(picker_rows(app)[0]) == ["Spike PLA Ivory", "Spike PLA Silk Ivory"]
 
@@ -449,7 +449,7 @@ class TestColors:
         stock(app, filament("Spike PLA Snow", "Spike", "PLA", "#F0F0F0"),
               filament("Spike PLA Cloud", "Spike", "PLA", "#FAFAFA"))
         load(app, app.printer.tool("PLA", "Spike", "", "#FFFFFF"))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Spike PLA Cloud")]
 
     @pytest.mark.parametrize("color", [None, "", "#808080"])
@@ -457,21 +457,21 @@ class TestColors:
         """A preset may leave its color out, and Filament DB gives a filament without one #808080."""
         stock(app, filament("Spike PLA Teal", "Spike", "PLA", "#008080"), filament("Spike PLA", "Spike", "PLA", color))
         load(app, app.printer.tool("PLA", "Spike", "Red", "#FF0000"))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Spike PLA")]
         assert app.dialogs[-1].endswith("(no installed Spike PLA preset is Red)")
 
     def test_a_gray_filament_keeps_its_color(self, app):
         stock(app, filament("Spike PLA", "Spike", "PLA", None), filament("Spike PLA Gray", "Spike", "PLA", "#808080"))
         load(app, app.printer.tool("PLA", "Spike", "", "#808080"))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Spike PLA Gray")]
 
     def test_only_other_colors_selects_the_closest_and_says_so(self, app):
         stock(app, filament("Spike PLA Navy", "Spike", "PLA", "#000080"),
               filament("Spike PLA Coral", "Spike", "PLA", "#FF7F50"))
         load(app, app.printer.tool("PLA", "Spike", "", "#C80000"))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Spike PLA Coral")]
         [row] = picker_rows(app)
         assert labels(row) == ["Spike PLA Coral", "Spike PLA Navy"]
@@ -481,7 +481,7 @@ class TestColors:
         stock(app, filament("Overture PLA Silk", "Overture", "PLA", "#FF0000"),
               filament("Overture PLA", "Overture", "PLA", "#0000FF"))
         load(app, app.printer.tool("PLA", "Overture", "", ""))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Overture PLA")]
         [row] = picker_rows(app)
         assert labels(row) == ["Overture PLA", "Overture PLA Silk"]
@@ -491,7 +491,7 @@ class TestColors:
         stock(app, filament("Overture PLA Silk White", "Overture", "PLA", "#FFFFFF"),
               filament("Overture PLA White", "Overture", "PLA", "#FFFFFF"))
         load(app, app.printer.tool("PLA", "Overture", "White", "#FFFFFF"))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Overture PLA White")]
 
     @pytest.mark.parametrize("first, second", [((0, 0, 0), (255, 255, 255)), ((255, 0, 0), (255, 0, 0))])
@@ -508,7 +508,7 @@ class TestAbrasive:
     def test_a_soft_nozzle_gets_abrasive_filament_last(self, app):
         self.stock_two(app)
         load(app, app.printer.tool("PETG", "Spike", "Black", "#000000", hardened=False))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Spike PETG Red")]
         assert app.dialogs[-1].endswith(
             "(Spike PETG Carbon Fiber Black is Black, but abrasive, and the nozzle is not hardened)")
@@ -517,7 +517,7 @@ class TestAbrasive:
         stock(app, filament("Spike PETG CF Red", "Spike", "PETG", "#FF0000"),
               filament("Spike PETG Black", "Spike", "PETG", "#000000"))
         load(app, app.printer.tool("PETG", "Spike", "Black", "#000000"))
-        app.match()
+        app.sync()
         assert app.dialogs[-1].endswith(f"Slot 1: Spike PETG Black, in place of {SYSTEM}")
 
     @pytest.mark.parametrize("text", ["PA-CF", "PETG-CF10", "GF30", "PA6 Glass Fibre", "PETG Carbon Fiber Black",
@@ -534,13 +534,13 @@ class TestAbrasive:
         stock(app, filament("Spike Polycarbonate Black", "Spike", "PC", "#000000"),
               filament("Spike PC Gray", "Spike", "PC", "#808080"))
         load(app, app.printer.tool("PC", "Spike", "Black", "#000000"))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Spike Polycarbonate Black")]
 
     def test_a_hardened_nozzle_takes_it(self, app):
         self.stock_two(app)
         load(app, app.printer.tool("PETG", "Spike", "Black", "#000000", hardened=True))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Spike PETG Carbon Fiber Black")]
 
     @pytest.mark.parametrize("record", [
@@ -553,7 +553,7 @@ class TestAbrasive:
         stock(app, record)
         material = record.values["filament_type"]
         load(app, app.printer.tool(material, "Spike", "Black", "#000000"))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, record.name)]
         assert app.dialogs[-1].endswith("(it is abrasive, and the nozzle is not hardened)")
 
@@ -561,7 +561,7 @@ class TestAbrasive:
         """CF and GF in the printer part of a name, as in a printer called GF1, say nothing about the filament."""
         stock(app, filament("Spike PETG Black @GF1", "Spike", "PETG", "#000000", alias="Spike PETG Black", is_system=True))
         load(app, app.printer.tool("PETG", "Spike", "Black", "#000000"))
-        app.match()
+        app.sync()
         assert app.dialogs[-1].endswith(f"Slot 1: Spike PETG Black, in place of {SYSTEM}")
 
 
@@ -572,7 +572,7 @@ class TestKeeping:
               filament("Overture PLA Matte White", "Overture", "PLA", "#FAFAFA"))
         slots(app, "Overture PLA Matte White")
         load(app, app.printer.tool("PLA", "Overture", "White", "#FFFFFF"))
-        result = app.match()
+        result = app.sync()
         assert result.message == "Nothing to change.\n\nSlot 1: keeps Overture PLA Matte White"
         assert not app.dialogs and not app.editor.selections
         assert labels(picker_rows(app)[0]) == ["Overture PLA Matte White", "Overture PLA White"]
@@ -582,7 +582,7 @@ class TestKeeping:
               filament("Overture PLA Black", "Overture", "PLA", "#000000"))
         slots(app, "Overture PLA Black")
         load(app, app.printer.tool("PLA", "Overture", "White", "#FFFFFF"))
-        app.match()
+        app.sync()
         assert app.dialogs[-1].endswith("Slot 1: Overture PLA White, in place of Overture PLA Black")
         assert selected(app) == [(1, "Overture PLA White")]
 
@@ -591,7 +591,7 @@ class TestKeeping:
               filament("Overture PLA Tuned", "Overture", "PLA", "#FFFFFF"))
         slots(app, "Overture PLA Tuned")
         load(app, app.printer.tool("PLA", "Overture", "White", "#FFFFFF"))
-        assert app.match().message == "Nothing to change.\n\nSlot 1: keeps Overture PLA Tuned"
+        assert app.sync().message == "Nothing to change.\n\nSlot 1: keeps Overture PLA Tuned"
         assert labels(picker_rows(app)[0]) == ["Overture PLA Tuned", "Overture PLA White"]
 
     def test_a_preset_counts_as_the_one_it_inherits_from(self, app):
@@ -601,7 +601,7 @@ class TestKeeping:
               filament("My Tuned PLA", "Spike", "PLA", "#3D3E3D", parent="Spike PLA Galaxy Black @CORE One"))
         slots(app, "My Tuned PLA")
         load(app, app.printer.tool("PLA", "Spike", "Galaxy Black", "#101010"))
-        assert app.match().message == "Nothing to change.\n\nSlot 1: keeps My Tuned PLA"
+        assert app.sync().message == "Nothing to change.\n\nSlot 1: keeps My Tuned PLA"
         assert labels(picker_rows(app)[0]) == ["My Tuned PLA", "Spike PLA Galaxy Black"]
 
     def test_keeps_a_preset_the_dropdown_no_longer_offers(self, app):
@@ -609,26 +609,26 @@ class TestKeeping:
               filament("My PLA", "Overture", "PLA", "#FFFFFF", is_visible=False))
         slots(app, "My PLA")
         load(app, app.printer.tool("PLA", "Overture", "White", "#FFFFFF"))
-        assert app.match().message == "Nothing to change.\n\nSlot 1: keeps My PLA"
+        assert app.sync().message == "Nothing to change.\n\nSlot 1: keeps My PLA"
 
     def test_a_preset_of_another_vendor_is_replaced(self, app):
         stock(app, filament("Spike PLA", "Spike", "PLA", None))
         load(app, app.printer.tool("PLA", "Spike", "", ""))
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Spike PLA")]
 
     def test_a_slots_preset_with_unsaved_edits_shows_its_name(self, app):
         app.filaments.selected.is_dirty = True
         stock(app, filament("Spike PLA", "Spike", "PLA", None))
         load(app, app.printer.tool("PLA", "Spike", "", ""))
-        app.match()
+        app.sync()
         assert app.dialogs[-1].endswith(f"Slot 1: Spike PLA, in place of {SYSTEM}")
 
     def test_a_slots_preset_that_is_gone_shows_its_name(self, app):
         stock(app, filament("Spike PLA", "Spike", "PLA", None))
         slots(app, "Removed PLA")
         load(app, app.printer.tool("PLA", "Spike", "", ""))
-        app.match()
+        app.sync()
         assert app.dialogs[-1].endswith("Slot 1: Spike PLA, in place of Removed PLA")
 
 
@@ -644,9 +644,9 @@ class TestPicking:
         self.stock_whites(app)
         load(app, app.printer.tool("PCTG", "3D-Fuel", "White", "#FFFFFF"))
         app.orca.host.ui.picks = lambda rows: [1]
-        result = app.match()
+        result = app.sync()
         [window] = app.orca.host.ui.windows
-        assert window.title == "Match printer filaments"
+        assert window.title == "Sync filaments from PrusaLink"
         assert window.data == {"rows": [{
             "slot": 1, "tool": "3D-Fuel PCTG White", "color": "#FFFFFF", "detail": f"Now {SYSTEM}",
             "options": [{"label": "Pro PCTG Snow White", "color": "#EEF2EF"},
@@ -662,7 +662,7 @@ class TestPicking:
             ("Pearl", "#EAE0C8"), ("Arctic", "#E0E8F0"), ("Silk White", "#FFFFFF"), ("White", "#FFFFFF"),
             ("Ivory", "#F5F5DC"), ("Red", "#FF0000")]))
         load(app, app.printer.tool("PLA", "Spike", "White", "#FFFFFF"))
-        app.match()
+        app.sync()
         assert labels(picker_rows(app)[0]) == [
             "Spike PLA White", "Spike PLA Silk White", "Spike PLA Arctic", "Spike PLA Ivory", "Spike PLA Pearl"]
 
@@ -671,7 +671,7 @@ class TestPicking:
         stock(app, filament("Spike PLA White", "Spike", "PLA", "#FFFFFF"), filament("Spike PLA Ivory", "Spike", "PLA", "#F5F5DC"))
         slots(app, "Spike PLA Ivory")
         load(app, app.printer.tool("PLA", "Spike", "White", "#FFFFFF"))
-        assert app.match().message == "Nothing to change.\n\nSlot 1: keeps Spike PLA Ivory"
+        assert app.sync().message == "Nothing to change.\n\nSlot 1: keeps Spike PLA Ivory"
         assert labels(picker_rows(app)[0]) == ["Spike PLA Ivory", "Spike PLA White"]
 
     def test_a_color_named_on_the_printer_is_selected_alone(self, app):
@@ -680,7 +680,7 @@ class TestPicking:
               filament("Spike PLA Jet", "Spike", "PLA", "#000000"))
         slots(app, "Spike PLA Jet")
         load(app, app.printer.tool("PLA", "Spike", "Galaxy Black", "#101010"))
-        app.match()
+        app.sync()
         assert not app.orca.host.ui.windows
         assert app.dialogs[-1].endswith("Slot 1: Spike PLA Galaxy Black, in place of Spike PLA Jet")
         assert selected(app) == [(1, "Spike PLA Galaxy Black")]
@@ -689,7 +689,7 @@ class TestPicking:
         stock(app, filament("Spike PETG Black", "Spike", "PETG", "#000000"),
               filament("Spike PETG CF Black", "Spike", "PETG", "#000000"))
         load(app, app.printer.tool("PETG", "Spike", "Black", "#000000", hardened=False))
-        app.match()
+        app.sync()
         assert not app.orca.host.ui.windows
         assert selected(app) == [(1, "Spike PETG Black")]
 
@@ -698,7 +698,7 @@ class TestPicking:
         slots(app, "Pro PCTG Snow White")
         load(app, app.printer.tool("PCTG", "3D Fuel", "White", "#FFFFFF"))
         app.orca.host.ui.picks = lambda rows: [1]
-        app.match()
+        app.sync()
         assert labels(picker_rows(app)[0]) == ["Pro PCTG Snow White", "Pro PCTG Translucent White"]
         assert selected(app) == [(1, "Pro PCTG Translucent White")]
 
@@ -707,7 +707,7 @@ class TestPicking:
         slots(app, SYSTEM_NAME, SYSTEM_NAME, SYSTEM_NAME)
         load(app, app.printer.tool("PCTG", "3D Fuel", "White", "#FFFFFF"), app.printer.tool("PLA", "Spike", "Red", "#FF0000"),
              app.printer.tool("PETG", "Spike", "Blue", "#0000FF"), app.printer.tool())
-        app.match()
+        app.sync()
         [window] = app.orca.host.ui.windows
         assert [(row["slot"], len(row["options"])) for row in window.data["rows"]] == [(1, 2), (2, 1)]
         assert window.data["notes"] == ("Slot 3: left alone, as no installed preset is Spike PETG\n"
@@ -719,7 +719,7 @@ class TestPicking:
         self.stock_whites(app)
         load(app, app.printer.tool("PCTG", "3D Fuel", "White", "#FFFFFF"))
         app.orca.host.ui.picks = lambda rows: None
-        result = app.match()
+        result = app.sync()
         assert (result.status, result.message) == (PluginResult.Skipped, "Nothing was changed.")
         assert not app.editor.selections
 
@@ -727,7 +727,7 @@ class TestPicking:
         self.stock_whites(app)
         load(app, app.printer.tool("PCTG", "3D Fuel", "White", "#FFFFFF"))
         app.orca.host.ui.timing = "later"
-        app.match()
+        app.sync()
         assert selected(app) == [(1, "Pro PCTG Snow White")]
 
     def test_a_dialog_closed_without_an_answer_changes_nothing(self, app):
@@ -735,7 +735,7 @@ class TestPicking:
         self.stock_whites(app)
         load(app, app.printer.tool("PCTG", "3D Fuel", "White", "#FFFFFF"))
         app.orca.host.ui.timing = "unloaded"
-        assert app.match().message == "Nothing was changed."
+        assert app.sync().message == "Nothing was changed."
         assert not app.editor.selections
 
     @pytest.mark.parametrize("answer", ["yes", {"picks": "0"}, [0, 0], [2], [-1], ["0"], [True]])
@@ -743,7 +743,7 @@ class TestPicking:
         self.stock_whites(app)
         load(app, app.printer.tool("PCTG", "3D Fuel", "White", "#FFFFFF"))
         app.orca.host.ui.picks = lambda rows: answer
-        assert app.match().message == "Nothing was changed."
+        assert app.sync().message == "Nothing was changed."
         assert not app.editor.selections
 
     def test_a_label_cannot_end_the_pages_script(self, plugin, orca):
@@ -782,7 +782,7 @@ class TestSlots:
              app.printer.tool("PETG", "Spike", "Blue", "#0000FF"), None,
              app.printer.tool("ASA", "Spike", "Black", "#000000"), app.printer.tool("PLA", "Spike", "Red", "#FF0000"))
         app.printer.tools["9"] = {"loaded": "yes"}
-        result = app.match()
+        result = app.sync()
         assert app.dialogs == ["Select these filament presets to match the printer?\n\n"
                                f"Slot 1: Spike PLA Red, in place of {SYSTEM}\n"
                                f"Slot 3: Spike PETG Blue, in place of {SYSTEM}\n"
@@ -795,7 +795,7 @@ class TestSlots:
     def test_a_project_with_one_slot(self, app):
         self.stock_three(app)
         load(app, app.printer.tool(), app.printer.tool(), app.printer.tool("PETG", "Spike", "Blue", "#0000FF"))
-        result = app.match()
+        result = app.sync()
         assert result.message == ("Nothing to change.\n\n"
                                   "Empty on the printer, so left alone: tools 1 and 2\n"
                                   "Not in this project, which has 1 filament slot: tool 3")
@@ -807,7 +807,7 @@ class TestSlots:
         self.stock_three(app)
         load(app, app.printer.tool("PLA", "Spike", "Red", "#FF0000"))
         app.orca.host.ui.answer = "cancel"
-        result = app.match()
+        result = app.sync()
         assert (result.status, result.message) == (PluginResult.Skipped, "Nothing was changed.")
         assert not app.editor.selections
 
@@ -818,7 +818,7 @@ class TestSlots:
         load(app, app.printer.tool("PLA", "Spike", "Red", "#FF0000"), app.printer.tool("PETG", "Spike", "Blue", "#0000FF"),
              app.printer.tool("ASA", "Spike", "Black", "#000000"))
         app.editor.cancelled_slots.add(2)
-        result = app.match()
+        result = app.sync()
         assert result.status is PluginResult.Skipped
         assert result.message == ('Stopped at slot 2: Switching the edited filament preset to "Spike PETG Blue" '
                                   "was canceled. Slots changed before it: 1.")
@@ -828,14 +828,14 @@ class TestSlots:
         self.stock_three(app)
         load(app, app.printer.tool("PLA", "Spike", "Red", "#FF0000"))
         app.editor.cancelled_slots.add(1)
-        assert app.match().message.endswith("was canceled.")
+        assert app.sync().message.endswith("was canceled.")
 
     def test_a_refused_slot_is_reported_and_the_rest_go_ahead(self, app):
         self.stock_three(app)
         slots(app, SYSTEM_NAME, SYSTEM_NAME)
         load(app, app.printer.tool("PLA", "Spike", "Red", "#FF0000"), app.printer.tool("PETG", "Spike", "Blue", "#0000FF"))
         app.editor.mixed_color_slots.add(1)
-        result = app.match()
+        result = app.sync()
         assert result.message == ("Selected filament presets for slot 2.\n"
                                   "OrcaSlicer would not select Spike PLA Red for slot 1: "
                                   "Filament slot 1 is a mixed-color virtual slot")
@@ -844,7 +844,7 @@ class TestSlots:
         self.stock_three(app)
         load(app, app.printer.tool("PLA", "Spike", "Red", "#FF0000"))
         app.editor.mixed_color_slots.add(1)
-        result = app.match()
+        result = app.sync()
         assert result.status is PluginResult.Skipped
         assert result.message == ("OrcaSlicer would not select Spike PLA Red for slot 1: "
                                   "Filament slot 1 is a mixed-color virtual slot\nNothing was changed.")
@@ -854,7 +854,7 @@ class TestSlots:
         """OrcaSlicer's message dialog would take a lone & for a shortcut key and drop it."""
         stock(app, filament("R&D PLA Red", "R&D", "PLA", "#FF0000"))
         load(app, app.printer.tool("PLA", "R&D", "Red", "#FF0000"))
-        app.match()
+        app.sync()
         assert app.dialogs[-1].endswith(f"Slot 1: R&&D PLA Red, in place of {SYSTEM}")
         assert selected(app) == [(1, "R&D PLA Red")]
 
@@ -867,7 +867,7 @@ class TestNozzles:
         app.state.nozzle = "0.4,0.6"
         load(app, app.printer.tool("PLA", "Spike", "Red", "#FF0000", nozzle=0.4),
              app.printer.tool("PLA", "Spike", "Red", "#FF0000", nozzle=0.4))
-        app.match()
+        app.sync()
         assert app.dialogs[-1].endswith(f"Slot 2: Spike PLA Red, in place of {SYSTEM} "
                                         "(the tool has a 0.4 mm nozzle, and the printer profile 0.6 mm)")
         assert f"Slot 1: Spike PLA Red, in place of {SYSTEM}\n" in app.dialogs[-1]
@@ -876,7 +876,7 @@ class TestNozzles:
         stock(app, filament("Spike PLA Red", "Spike", "PLA", "#FF0000"))
         slots(app, SYSTEM_NAME, SYSTEM_NAME)
         load(app, None, app.printer.tool("PLA", "Spike", "Red", "#FF0000", nozzle=0.6))
-        app.match()
+        app.sync()
         assert app.dialogs[-1].endswith("(the tool has a 0.6 mm nozzle, and the printer profile 0.4 mm)")
 
     @pytest.mark.parametrize("profile, tool", [(None, 0.6), ("0.4", None)])
@@ -884,7 +884,7 @@ class TestNozzles:
         stock(app, filament("Spike PLA Red", "Spike", "PLA", "#FF0000"))
         app.state.nozzle = profile
         load(app, app.printer.tool("PLA", "Spike", "Red", "#FF0000", nozzle=tool))
-        app.match()
+        app.sync()
         assert app.dialogs[-1].endswith(f"in place of {SYSTEM}")
 
 
@@ -892,9 +892,9 @@ class TestRunning:
     def test_a_second_run_waits_its_turn(self, app):
         """OrcaSlicer starts a thread per click, and two runs would race to switch the slots."""
         assert app.plugin.RUN_LOCK.acquire(blocking=False)
-        result = app.match()
+        result = app.sync()
         app.plugin.RUN_LOCK.release()
-        assert (result.status, result.message) == (PluginResult.Skipped, "Match printer filaments is still running.")
+        assert (result.status, result.message) == (PluginResult.Skipped, "Sync filaments from PrusaLink is still running.")
         assert not app.printer.requests
 
     def test_a_host_failure_is_reported_instead_of_raised(self, app, orca):
@@ -902,9 +902,9 @@ class TestRunning:
         def broken():
             raise RuntimeError("Preset bundle is not available")
         orca.host.preset_bundle = broken
-        result = app.match()
+        result = app.sync()
         assert (result.status, result.message) == (PluginResult.Skipped,
-                                                   "Match printer filaments failed: Preset bundle is not available")
+                                                   "Sync filaments from PrusaLink failed: Preset bundle is not available")
 
     @pytest.mark.parametrize("value, expected", [
         ("0.97,0.98", ["0.97", "0.98"]),
@@ -918,7 +918,7 @@ class TestRunning:
         assert plugin.decode_value(value) == expected
 
     def test_registers_the_command(self, plugin, orca):
-        plugin.PrusaLinkFilamentMatch().register_capabilities()
-        assert [capability().get_name() for capability in orca.registered] == ["Match printer filaments"]
-        assert plugin.MatchPrinterFilaments().get_default_config() == {
+        plugin.PrusaLinkFilamentSync().register_capabilities()
+        assert [capability().get_name() for capability in orca.registered] == ["Sync filaments from PrusaLink"]
+        assert plugin.SyncFromPrusaLink().get_default_config() == {
             "address": "", "api_key": "", "user": "", "password": ""}

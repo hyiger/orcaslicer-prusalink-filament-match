@@ -1,16 +1,18 @@
-# PrusaLink Filament Match for OrcaSlicer
+# PrusaLink Filament Sync for OrcaSlicer
 
 Reads what each tool of a Prusa printer holds over PrusaLink, and selects the installed filament preset that matches it for that tool's filament slot. Requires OrcaSlicer 2.5.0-rc or later.
 
 ## Using it
 
-1. Install `orca_prusalink_filament_match_any.py` from OrcaSlicer's Plugins window.
+1. Install `orca_prusalink_filament_sync_any.py` from OrcaSlicer's Plugins window.
 2. Give it the printer's PrusaLink address and login (see [Settings](#settings)).
-3. Run **Match printer filaments**.
+3. Run **Sync filaments from PrusaLink**.
 
 It reads the vendor, material and color loaded in each tool of the printer, and shows the preset it picked for each filament slot. Press OK to select them. Tool 1 goes in slot 1, tool 2 in slot 2, and so on. When more than one preset fits a tool as well, such as `Snow White` and `Translucent White` for a tool the printer calls White, it shows a list for that slot instead, with its best guess first. Pick one in each list and press Select.
 
 The first run makes OrcaSlicer ask for permission to reach the printer: allow it, then run the command again.
+
+This plugin was called **PrusaLink Filament Match** up to version 0.2.0. OrcaSlicer takes the renamed file for a new plugin, so remove the old one, and enter its Config tab settings again if you used them.
 
 ## What it needs
 
@@ -19,7 +21,7 @@ The first run makes OrcaSlicer ask for permission to reach the printer: allow it
 
 ## Settings
 
-These are in the Config tab of **Match printer filaments**. Leave them empty to use the printer's own connection: click **Connection** next to the printer, choose PrusaLink, and enter the printer's address and its API key, or the user and password.
+These are in the Config tab of **Sync filaments from PrusaLink**. Leave them empty to use the printer's own connection: click **Connection** next to the printer, choose PrusaLink, and enter the printer's address and its API key, or the user and password.
 
 | Setting | Use |
 | --- | --- |
@@ -63,7 +65,7 @@ If the Filament tab has unsaved changes, OrcaSlicer asks about them before it sw
 
 Stock Prusa firmware reports over PrusaLink only the material of the filament in the active tool or MMU slot, such as `PLA`: no vendor, no color, and nothing about the other tools or whether the nozzle is hardened. So on a printer with stock firmware:
 
-- **Only a project with one filament slot can be matched.** The printer names the material in the tool or MMU slot in use, which may be any of several, so for a project with more filament slots, such as one for an XL, a Core One INDX or a printer with an MMU3, the command stops.
+- **Only a project with one filament slot can be synced.** The printer names the material in the tool or MMU slot in use, which may be any of several, so for a project with more filament slots, such as one for an XL, a Core One INDX or a printer with an MMU3, the command stops.
 - **Slot 1 is matched by material alone.** Every installed preset of that material fits as well, so the list offers them all, with a `Generic` preset first. The slot's own preset stays first when it is of that material.
 - **Abrasive filament is not put last,** as the printer does not say whether the nozzle is hardened.
 
@@ -83,11 +85,11 @@ To check the PrusaLink side against what the firmware sends byte for byte, run [
 
 The unit tests cannot reach the steps below, which need the running app.
 
-- [ ] Point a 4-slot project's printer connection at prusalink-mock, by API key, and match. OrcaSlicer asks once for permission to reach it. After you allow it and match again, the list shows slots 1 to 3 and the empty tool 4, and OK selects those presets.
+- [ ] Point a 4-slot project's printer connection at prusalink-mock, by API key, and sync. OrcaSlicer asks once for permission to reach it. After you allow it and sync again, the list shows slots 1 to 3 and the empty tool 4, and OK selects those presets.
 - [ ] A vendor's preset, such as `Prusament PLA` on a Prusa printer, is selected for a tool that holds it, and a preset you hid is not.
 - [ ] Each changed slot shows its new preset's color, in the sidebar and in the preview.
-- [ ] With two presets of a tool's vendor and material named for its color, such as `Snow White` and `Translucent White` for White, match. A dialog lists both for that slot, with each other slot's preset beside it. Pick the second and press Select: the slot gets it. Match again: the list starts with it. Cancel and Escape change nothing. The dialog is readable in OrcaSlicer's dark mode.
-- [ ] Match again with the user and password instead. It reads the printer the same way.
-- [ ] Set the printer's connection to Prusa Connect, and put the printer's address and API key in `address` and `api_key`. Match reads the printer, and printing still goes through Prusa Connect.
-- [ ] Match a one-slot project on a printer with stock firmware and PLA loaded. The list offers the installed PLA presets for slot 1, `Generic PLA` first, and says the printer reports only the material.
-- [ ] Edit the filament in slot 1, then match a printer whose tool 1 holds another filament. OrcaSlicer asks about the edit, and Cancel leaves the slot and the edit as they were.
+- [ ] With two presets of a tool's vendor and material named for its color, such as `Snow White` and `Translucent White` for White, sync. A dialog lists both for that slot, with each other slot's preset beside it. Pick the second and press Select: the slot gets it. Sync again: the list starts with it. Cancel and Escape change nothing. The dialog is readable in OrcaSlicer's dark mode.
+- [ ] Sync again with the user and password instead. It reads the printer the same way.
+- [ ] Set the printer's connection to Prusa Connect, and put the printer's address and API key in `address` and `api_key`. Sync reads the printer, and printing still goes through Prusa Connect.
+- [ ] Sync a one-slot project on a printer with stock firmware and PLA loaded. The list offers the installed PLA presets for slot 1, `Generic PLA` first, and says the printer reports only the material.
+- [ ] Edit the filament in slot 1, then sync from a printer whose tool 1 holds another filament. OrcaSlicer asks about the edit, and Cancel leaves the slot and the edit as they were.

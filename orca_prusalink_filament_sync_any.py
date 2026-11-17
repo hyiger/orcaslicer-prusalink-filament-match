@@ -3,15 +3,15 @@
 # dependencies = []
 #
 # [tool.orcaslicer.plugin]
-# name = "PrusaLink Filament Match"
+# name = "PrusaLink Filament Sync"
 # description = "Selects, for each filament slot, the installed filament preset that matches what a Prusa printer reports loaded in that tool."
 # author = "hyiger"
-# version = "0.2.0"
+# version = "0.3.0"
 # type = "script"
 # ///
-"""PrusaLink Filament Match -- selects the filament presets that match what a Prusa printer holds.
+"""PrusaLink Filament Sync -- selects the filament presets that match what a Prusa printer holds.
 
-"Match printer filaments" reads the vendor, material and color of each tool from a Prusa printer over
+"Sync filaments from PrusaLink" reads the vendor, material and color of each tool from a Prusa printer over
 PrusaLink, and selects, for that tool's filament slot, the installed filament preset that fits it best:
 any preset the slot's dropdown offers, from a vendor, a bundle or the user. Where several fit as well,
 the user picks among them in an HTML dialog.
@@ -31,7 +31,7 @@ import urllib.request
 
 import orca
 
-MATCH_NAME = "Match printer filaments"
+SYNC_NAME = "Sync filaments from PrusaLink"
 RUN_LOCK = threading.Lock()
 # OrcaSlicer asks in the background and denies the attempt that made it ask.
 PERMISSION_TEXT = "OrcaSlicer needs your permission to reach this address. Allow it, then run this again."
@@ -165,7 +165,7 @@ document.addEventListener("keydown", event => {
 """
 
 
-class MatchError(Exception):
+class SyncError(Exception):
     """A failure to report to the user as it stands."""
 
 
@@ -224,11 +224,11 @@ class Printer:
         if host := own("address").strip():
             api_key, user, password = own("api_key").strip(), own("user").strip(), own("password")
             digest = bool(user) and not api_key
-            self.settings = f"the Config tab of {MATCH_NAME}"
+            self.settings = f"the Config tab of {SYNC_NAME}"
         else:
             host = setting("print_host").strip()
             if setting("host_type") != "prusalink" or not host:
-                raise MatchError(f"Set address, and api_key or user and password, in the Config tab of {MATCH_NAME}. "
+                raise SyncError(f"Set address, and api_key or user and password, in the Config tab of {SYNC_NAME}. "
                                  "Or click Connection next to the printer, choose PrusaLink, and enter its address "
                                  "and API key or password.")
             api_key, user, password = setting("printhost_apikey"), setting("printhost_user"), setting("printhost_password")
@@ -261,27 +261,27 @@ class Printer:
             with urllib.request.build_opener(*self.handlers).open(request, timeout=PRINTER_TIMEOUT_SECONDS) as response:
                 return json.load(response)
         except PermissionError as error:
-            raise MatchError(PERMISSION_TEXT) from error
+            raise SyncError(PERMISSION_TEXT) from error
         except urllib.error.HTTPError as error:
             if error.code == 404 and missing_ok:
                 return None
             if error.code in (401, 403):
-                raise MatchError(f"The printer refused the API key or password. Check them in {self.settings}, "
+                raise SyncError(f"The printer refused the API key or password. Check them in {self.settings}, "
                                  "and that login is enabled on the printer.") from error
             if error.code == 404:
-                raise MatchError(f"The printer at {self.url} does not report what it holds. "
+                raise SyncError(f"The printer at {self.url} does not report what it holds. "
                                  "Check that the address is a Prusa printer's PrusaLink.") from error
-            raise MatchError(f"The printer at {self.url} returned an error: HTTP {error.code}.") from error
+            raise SyncError(f"The printer at {self.url} returned an error: HTTP {error.code}.") from error
         except (urllib.error.URLError, TimeoutError) as error:
-            raise MatchError(f"Could not reach the printer at {self.url}. Is it on?") from error
+            raise SyncError(f"Could not reach the printer at {self.url}. Is it on?") from error
         # urllib wraps only the errors of sending the request: these come from a bad port or from the reply.
         except http.client.InvalidURL as error:
-            raise MatchError(f"The printer address {self.url} is not valid. Check it in {self.settings}.") from error
+            raise SyncError(f"The printer address {self.url} is not valid. Check it in {self.settings}.") from error
         except (http.client.HTTPException, ConnectionError) as error:
-            raise MatchError(f"The printer at {self.url} closed the connection before it answered. "
+            raise SyncError(f"The printer at {self.url} closed the connection before it answered. "
                              "Run this again.") from error
         except ValueError as error:
-            raise MatchError(f"The printer at {self.url} sent a reply that is not JSON.") from error
+            raise SyncError(f"The printer at {self.url} sent a reply that is not JSON.") from error
 
 
 @dataclasses.dataclass
@@ -330,7 +330,7 @@ def parse_tools(body):
     """Read the reply to GET /api/v1/tools. Tool N is filament slot N, so a gap in the numbers stays."""
     tools = body.get("tools") if isinstance(body, dict) else None
     if not isinstance(tools, dict):
-        raise MatchError("The printer's reply does not list its tools.")
+        raise SyncError("The printer's reply does not list its tools.")
     read = {key: read_tool(key, entry) for key, entry in tools.items()}
     return ({tool.number: tool for tool in read.values() if tool},
             sorted(key for key, tool in read.items() if not tool))
@@ -341,7 +341,7 @@ def stock_tool(body):
     telemetry = body.get("telemetry") if isinstance(body, dict) else None
     material = telemetry.get("material") if isinstance(telemetry, dict) else None
     if not isinstance(material, str):
-        raise MatchError("The printer's reply does not say what filament it holds.")
+        raise SyncError("The printer's reply does not say what filament it holds.")
     material = material.strip()
     return Tool(1, "" if material == NO_FILAMENT else material, "", "", None, None, None)
 
@@ -568,7 +568,7 @@ def show_dialog(page, height):
         answers.append(data)
         done.set()
 
-    window = orca.host.ui.create_window(page, MATCH_NAME, PICKER_WIDTH, height, on_close=done.set,
+    window = orca.host.ui.create_window(page, SYNC_NAME, PICKER_WIDTH, height, on_close=done.set,
                                         style=orca.host.ui.WINDOW_MODAL, on_submit=submitted)
     # OrcaSlicer calls back on its own thread. Unloading the plugin closes the dialog without a call,
     # so a closed window ends the wait too.
@@ -601,19 +601,19 @@ def pick(steps, nozzles, notes):
     return [(step, step.options[index]) for index, step in zip(picks, shown)]
 
 
-def match(config):
+def sync(config):
     """Select, for each loaded tool of the printer, the installed preset that fits it best, or the one the user
     picks where several fit as well."""
     bundle = orca.host.preset_bundle()
     tools, unreadable, stock = Printer(bundle, config).tools()
     if not tools and not unreadable:
-        raise MatchError("The printer reports no tools, so none of its docks is calibrated yet.")
+        raise SyncError("The printer reports no tools, so none of its docks is calibrated yet.")
 
     presets = installed_presets(bundle.filaments)
     slot_names = list(bundle.current_filament_preset_names())
     # Stock firmware names the material of the active tool or MMU slot, which may be any of several.
     if stock and len(slot_names) > 1:
-        raise MatchError(f"The printer's firmware reports only the material in the active tool, so it cannot say what "
+        raise SyncError(f"The printer's firmware reports only the material in the active tool, so it cannot say what "
                          f"each of this project's {len(slot_names)} filament slots holds. Match a project with one "
                          "filament slot, or use Buddy firmware with Filament Slots.")
     # A slot may hold a preset the dropdown no longer offers, such as a hidden one, and it can keep it.
@@ -643,7 +643,7 @@ def match(config):
     if asked:
         picked = pick(steps, nozzles, [line for step, line in zip(steps, lines) if not step.options] + others)
         if picked is None:
-            raise MatchError("Nothing was changed.")
+            raise SyncError("Nothing was changed.")
     else:
         picked = [(step, step.preset) for step in steps if step.options]
     changes = [(step, preset) for step, preset in picked if preset.name != slot_names[step.tool.number - 1]]
@@ -651,8 +651,8 @@ def match(config):
     if not changes:
         return "Nothing to change.\n\n" + "\n".join(lines)
     question = "Select these filament presets to match the printer?\n\n" + "\n".join(lines)
-    if not asked and not confirmed(question, MATCH_NAME):
-        raise MatchError("Nothing was changed.")
+    if not asked and not confirmed(question, SYNC_NAME):
+        raise SyncError("Nothing was changed.")
 
     selected, refused = [], []
     for step, preset in changes:
@@ -664,28 +664,28 @@ def match(config):
         except RuntimeError as error:
             # The user cancelled the prompt about unsaved edits, so the rest is left as it is.
             done = f" Slots changed before it: {', '.join(map(str, selected))}." if selected else ""
-            raise MatchError(f"Stopped at slot {step.tool.number}: {error}.{done}") from error
+            raise SyncError(f"Stopped at slot {step.tool.number}: {error}.{done}") from error
         else:
             selected.append(step.tool.number)
     if not selected:
-        raise MatchError("\n".join([*refused, "Nothing was changed."]))
+        raise SyncError("\n".join([*refused, "Nothing was changed."]))
     return "\n".join([f"Selected filament presets for {numbered('slot', selected)}.", *refused])
 
 
-def run_match(config):
+def run_sync(config):
     """Run the match and show its outcome, since a script's return value is easy to miss."""
     levels = orca.host.ui.NotificationLevel
     locked = RUN_LOCK.acquire(blocking=False)
     try:
         if not locked:
-            raise MatchError(f"{MATCH_NAME} is still running.")
-        message = match(config)
-    except MatchError as error:
+            raise SyncError(f"{SYNC_NAME} is still running.")
+        message = sync(config)
+    except SyncError as error:
         message = str(error)
     except Exception as error:
         # OrcaSlicer disables a plugin whose script raises, which would remove the command from the
         # Plugins window over something as passing as a preset it refused to select.
-        message = f"{MATCH_NAME} failed: {error}"
+        message = f"{SYNC_NAME} failed: {error}"
     else:
         orca.host.ui.push_notification(levels.RegularNotificationLevel, message)
         return orca.ExecutionResult.success(message)
@@ -696,18 +696,18 @@ def run_match(config):
     return orca.ExecutionResult.skipped(message)
 
 
-class MatchPrinterFilaments(orca.script.ScriptPluginCapabilityBase):
+class SyncFromPrusaLink(orca.script.ScriptPluginCapabilityBase):
     def get_name(self):
-        return MATCH_NAME
+        return SYNC_NAME
 
     def get_default_config(self):
         return {"address": "", "api_key": "", "user": "", "password": ""}
 
     def execute(self):
-        return run_match(json.loads(self.get_config()))
+        return run_sync(json.loads(self.get_config()))
 
 
 @orca.plugin
-class PrusaLinkFilamentMatch(orca.base):
+class PrusaLinkFilamentSync(orca.base):
     def register_capabilities(self):
-        orca.register_capability(MatchPrinterFilaments)
+        orca.register_capability(SyncFromPrusaLink)
