@@ -61,6 +61,8 @@ The list also notes:
 
 If the Filament tab has unsaved changes, OrcaSlicer asks about them before it switches presets, as when you pick one yourself. Cancel stops the command, and the slots changed before it stay changed.
 
+The slot's color is not changed. OrcaSlicer's plugin API selects presets but cannot set a slot's color. When you pick a preset yourself, the slot takes the preset's default color, if it has one. A preset the plugin selects does not, so the slot keeps the color it had. Set it by hand if you want it to match.
+
 ## Stock firmware
 
 Stock Prusa firmware reports over PrusaLink only the material of the filament in the active tool or MMU slot, such as `PLA`: no vendor, no color, and nothing about the other tools or whether the nozzle is hardened. So on a printer with stock firmware:
@@ -96,7 +98,7 @@ The unit tests cannot reach the steps below, which need the running app.
 
 - [ ] Point a 4-slot project's printer connection at prusalink-mock, by API key, and sync. OrcaSlicer asks once for permission to reach it. After you allow it and sync again, the list shows slots 1 to 3 and the empty tool 4, and OK selects those presets.
 - [ ] A vendor's preset, such as `Prusament PLA` on a Prusa printer, is selected for a tool that holds it, and a preset you hid is not.
-- [ ] Each changed slot shows its new preset's color, in the sidebar and in the preview.
+- [ ] Each changed slot keeps the color it had, in the sidebar and in the preview, as the plugin cannot set it.
 - [ ] With two presets of a tool's vendor and material named for its color, such as `Snow White` and `Translucent White` for White, sync. A dialog lists both for that slot, with each other slot's preset beside it. Pick the second and press Select: the slot gets it. Sync again: the list starts with it. Cancel and Escape change nothing. The dialog is readable in OrcaSlicer's dark mode.
 - [ ] Sync again with the user and password instead. It reads the printer the same way.
 - [ ] Set the printer's connection to Prusa Connect, and put the printer's address and API key in `address` and `api_key`. Sync reads the printer, and printing still goes through Prusa Connect.
